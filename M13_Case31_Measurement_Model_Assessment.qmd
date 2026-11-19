@@ -1,0 +1,745 @@
+---
+title: "Case 31: Measurement Model Assessment"
+subtitle: "Employees Federal Credit Union"
+author: "Xueying Luo"
+date: today
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-title: "Contents"
+    toc-depth: 3
+    number-sections: true
+    smooth-scroll: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+editor: source
+---
+
+```{r}
+#| label: setup
+#| include: false
+library(haven)
+library(dplyr)
+library(knitr)
+library(psych)
+library(lavaan)
+```
+
+# Purpose and Case Context
+
+Employees Federal Credit Union (EFCU) conducted a survey to understand how members felt about its employees, financial services, and overall operations. The credit union was particularly interested in members' borrowing behavior and whether its services were meeting their needs.
+
+For this assignment, I focus on two constructs from the Case 31 measurement table: attitudes toward employee proficiencies and attitude toward operational effectiveness. Both are measured using several questionnaire items, but that does not necessarily mean the items work well together as a single measure.
+
+In my previous Case 31 assignments, I used reliability analysis and exploratory factor analysis (EFA) to examine these constructs. The results were encouraging for employee proficiency but less convincing for operational effectiveness.
+
+This time, I use confirmatory factor analysis (CFA) with the `lavaan` package to evaluate the proposed two-factor measurement model. Rather than exploring which questions might belong together, I start with the structure specified in the assignment and examine whether the data support it.
+
+The main purpose is to determine whether the two constructs are measured consistently and whether the proposed model is suitable for further analysis.
+
+# Learning Notes: CFA and Measurement Models
+
+## What is confirmatory factor analysis?
+
+CFA is used to test whether a proposed set of observed variables represents the underlying constructs we want to measure.
+
+An observed variable is something directly recorded in the dataset, such as a member's response to Q3 about employee courtesy. A latent variable is a concept that cannot be measured directly through one response, such as a member's overall attitude toward employee proficiency.
+
+The individual questions are called indicators. Their relationships with the latent variable are represented by factor loadings.
+
+The main difference between EFA and CFA is how the factor structure is determined. EFA explores how the items group together, while CFA starts with a proposed structure and tests how well it fits the data.
+
+For example, the Case 31 questionnaire asks whether employees are courteous, helpful, professional, and available. CFA allows me to examine whether these four responses reflect one underlying attitude toward employee proficiency.
+
+CFA is also part of structural equation modeling (SEM). A measurement model focuses on how well the indicators represent their factors, while a structural model examines relationships among variables or factors. This assignment evaluates the measurement model only.
+
+## What should I examine in CFA?
+
+Several results are important when interpreting CFA:
+
+- Model fit: Whether the proposed model represents the relationships observed in the data.
+- Factor loadings: How strongly each questionnaire item is related to its intended factor.
+- Reliability: Whether items measuring the same construct give reasonably consistent results.
+- Convergent validity: Whether the indicators share enough information to support the same construct.
+- Discriminant validity: Whether the two factors can be distinguished from each other.
+
+I need to consider these results together. For example, a statistically significant loading does not automatically mean that an item is a good measure of its construct.
+
+# Case 31 Constructs and Indicators
+
+The assignment identifies two multi-item constructs.
+
+| Construct | Questionnaire items | Measurement |
+|:-----------------------|:-----------------------|:-----------------------|
+| Attitudes toward employee proficiencies | Q3–Q6 | Employee courtesy, helpfulness, professionalism, and availability |
+| Attitude toward operational effectiveness | Q9r–Q12 and Q31–Q34 | Statement frequency, statement accuracy, ease of understanding statements, confidentiality, loan processing, service adequacy, and application simplicity |
+
+The first construct is fairly straightforward because all four questions describe members' evaluations of employees and use the same five-point agreement scale.
+
+The second construct is more complicated. Its questions cover different aspects of the member experience and do not all use the same response format.
+
+For example, Q9 asks how often members receive account statements, while Q32 asks whether loan applications are processed promptly. Both concern the credit union's operations, but a member might have a positive experience with one and a negative experience with the other.
+
+The two factors may still be related because members who have positive experiences with employees may also evaluate the credit union's operations favorably. However, they represent different concepts, so they should not automatically be treated as one factor.
+
+Other Case 31 variables, such as loan status (Q27), residence (Q38), and overall management evaluation (Q37), are measured with individual questions. They are not included as separate latent factors in this CFA because the assignment focuses on the two constructs measured by multiple indicators.
+
+# Data Preparation
+
+## Import and inspect the dataset
+
+I use the supplied SPSS dataset and the original Case 31 questionnaire to check the variables and response coding.
+
+```{r}
+#| label: import-data
+dat <- read_sav("Case 31 Data_efcu_1.sav")
+
+names(dat) <- tolower(names(dat))
+
+dim(dat)
+names(dat)
+```
+
+```{r}
+#| label: inspect-variables
+cfa_items <- c(
+  "q3", "q4", "q5", "q6",
+  "q9", "q10", "q11", "q12",
+  "q31", "q32", "q33", "q34"
+)
+
+str(dat[cfa_items])
+summary(dat[cfa_items])
+```
+
+The dataset contains `r nrow(dat)` observations and `r ncol(dat)` variables. Each row represents one survey record.
+
+I use the original questionnaire responses for CFA instead of the employee-performance composite variables that were calculated in earlier work. CFA needs the individual indicators to examine how each item relates to its proposed factor.
+
+## Check response coding and reverse-coded items
+
+Before estimating the CFA model, I checked the original questionnaire and the Case 31 measurement table.
+
+Q3–Q6 and Q31–Q34 use five-point agreement scales, where higher values indicate stronger agreement.
+
+Q9 asks how often members receive account statements. Its original coding is:
+
+| Original Q9 code | Response         |
+|------------------|------------------|
+| 1                | Too often        |
+| 2                | Very often       |
+| 3                | About right      |
+| 4                | Not often enough |
+| 5                | Never            |
+
+The measurement table uses `Q9r`, where the numerical order is reversed. Since the supplied dataset contains `q9`, I create `q9r` using the five-point reverse-coding formula.
+
+```{r}
+#| label: reverse-coding
+dat$q9r <- 6 - as.numeric(dat$q9)
+
+table(dat$q9, dat$q9r)
+```
+
+```{r}
+#| label: q9-verification
+q9_check <- as.data.frame(
+  table(
+    Original_Q9 = dat$q9,
+    Reversed_Q9 = dat$q9r
+  )
+)
+
+kable(
+  q9_check,
+  caption = "Verification of Q9 Reverse Coding"
+)
+```
+
+The reversal changes the numerical direction without changing what respondents originally selected.
+
+In this dataset, 99 members selected "About right" and 29 selected "Not often enough." These responses become 3 and 2, respectively, after reverse coding.
+
+One limitation is that Q9 is not a typical satisfaction scale. "About right" is the most balanced response, while receiving statements too often or not often enough could both be undesirable. Reversing the numerical order does not fully solve this measurement issue.
+
+Q10 also has a different coding direction. The original questionnaire uses 1 = Excellent through 4 = Poor. My previous Case 31 assignments used `q10r` so that higher values indicated better accuracy. However, the current CFA assignment specifies Q10, so I retain the original `q10` in the hypothesized model and consider its direction when interpreting the results.
+
+Q11 and Q12 are yes/no questions, coded 1 = Yes and 2 = No. The questionnaire also allows code 3 for "No answer."
+
+```{r}
+#| label: missing-response-coding
+table(dat$q11, useNA = "ifany")
+table(dat$q12, useNA = "ifany")
+
+q12_no_answer <- sum(dat$q12 == 3, na.rm = TRUE)
+
+dat$q11[dat$q11 == 3] <- NA
+dat$q12[dat$q12 == 3] <- NA
+
+q12_no_answer
+```
+
+There are `r q12_no_answer` responses coded as "No answer" for Q12. I treat these as missing values rather than including them as a third opinion category.
+
+This matters because Q12 asks whether members believe their account information is kept confidential. A missing answer should not be interpreted as either agreement or disagreement.
+
+## Descriptive statistics and missing values
+
+After checking the coding, I examine the items included in the proposed CFA model.
+
+```{r}
+#| label: cfa-data
+indicators <- c(
+  "q3", "q4", "q5", "q6",
+  "q9r", "q10", "q11", "q12",
+  "q31", "q32", "q33", "q34"
+)
+
+model_data <- as.data.frame(
+  lapply(dat[indicators], as.numeric)
+)
+
+summary(model_data)
+```
+
+```{r}
+#| label: item-descriptives
+item_summary <- data.frame(
+  Item = toupper(indicators),
+  Valid_N = sapply(model_data, function(x) sum(!is.na(x))),
+  Missing = sapply(model_data, function(x) sum(is.na(x))),
+  Mean = sapply(model_data, function(x) mean(x, na.rm = TRUE)),
+  SD = sapply(model_data, function(x) sd(x, na.rm = TRUE)),
+  Minimum = sapply(model_data, function(x) min(x, na.rm = TRUE)),
+  Maximum = sapply(model_data, function(x) max(x, na.rm = TRUE))
+)
+
+kable(
+  item_summary,
+  digits = 2,
+  caption = "Descriptive Statistics for the CFA Indicators"
+)
+```
+
+```{r}
+#| label: response-distributions
+table(model_data$q9r)
+table(model_data$q10)
+table(model_data$q11)
+table(model_data$q12, useNA = "ifany")
+
+colSums(is.na(model_data))
+sum(complete.cases(model_data))
+```
+
+The employee-proficiency questions generally receive positive ratings. This is consistent with my previous R3 analysis, where members rated courtesy and helpfulness particularly favorably.
+
+However, some operational questions have very uneven response distributions.
+
+For Q9, most respondents said that statement frequency was about right. Q11 also has very little variation because almost everyone reported that statements were easy to understand.
+
+Q12 has 22 missing responses, leaving 106 valid answers for that item.
+
+These differences are important because CFA examines relationships among items. When an item has very little variation, it may provide limited information about differences between respondents.
+
+For the main CFA, I use maximum likelihood estimation with `missing = "fiml"`. This allows `lavaan` to use available responses from participants who have missing data on some items, rather than automatically excluding every incomplete record.
+
+FIML assumes that the missing-data process is sufficiently explained by the observed information under the model. It does not guarantee that missing responses are unrelated to the underlying attitudes.
+
+Another limitation is that the model treats the ordered response scales and binary items as numeric variables. This makes the analysis consistent with the requested basic CFA approach, but the results need to be interpreted cautiously.
+
+# Hypothesized Measurement Model
+
+The assignment specifies a two-factor CFA model.
+
+```{r}
+#| label: measurement-model
+measurement_model <- '
+  Employee_Proficiencies =~ q3 + q4 + q5 + q6
+
+  Operational_Effectiveness =~ q9r + q10 + q11 + q12 +
+                               q31 + q32 + q33 + q34
+'
+
+measurement_model
+```
+
+The `=~` operator defines a latent factor and identifies the observed variables used to measure it.
+
+The first factor represents members' attitudes toward employee proficiency. The second represents their attitudes toward operational effectiveness.
+
+The model also allows the two factors to correlate because members' experiences with employees and the credit union's operations may be connected.
+
+## Model identification
+
+A CFA model must be identified before its parameters can be estimated.
+
+Here, there are 12 observed indicators: four for employee proficiency and eight for operational effectiveness.
+
+The covariance matrix for 12 observed variables contains 78 unique variance and covariance elements.
+
+I use `std.lv = TRUE` to fix each latent factor's variance at 1. This sets the scale of the factors while allowing their loadings to be estimated.
+
+The covariance part of the proposed model estimates 12 factor loadings, 12 residual variances, and one covariance between the factors. This gives 25 free covariance parameters and 53 degrees of freedom.
+
+Because the model has positive degrees of freedom, it is over-identified and its proposed relationships can be evaluated against the observed covariance structure.
+
+# CFA Analysis Using lavaan
+
+I estimate the proposed model using `cfa()` from the `lavaan` package.
+
+```{r}
+#| label: estimate-cfa
+fit <- cfa(
+  measurement_model,
+  data = model_data,
+  estimator = "ML",
+  missing = "fiml",
+  std.lv = TRUE
+)
+
+summary(
+  fit,
+  fit.measures = TRUE,
+  standardized = TRUE
+)
+```
+
+The standardized estimates allow the loadings to be compared even though some questions use different response scales.
+
+I examine the overall model fit first, followed by the individual loadings, reliability, and validity.
+
+# CFA Results
+
+## Overall model fit
+
+Model fit indicates how closely the proposed measurement model represents the relationships among the observed questionnaire items.
+
+```{r}
+#| label: model-fit
+fit_values <- fitMeasures(
+  fit,
+  c(
+    "chisq", "df", "pvalue",
+    "cfi", "tli", "rmsea",
+    "rmsea.ci.lower", "rmsea.ci.upper",
+    "srmr"
+  )
+)
+
+fit_table <- data.frame(
+  Measure = c(
+    "Chi-square",
+    "Degrees of freedom",
+    "p-value",
+    "CFI",
+    "TLI",
+    "RMSEA",
+    "RMSEA 90% CI Lower",
+    "RMSEA 90% CI Upper",
+    "SRMR"
+  ),
+  Result = as.numeric(fit_values)
+)
+
+kable(
+  fit_table,
+  digits = 3,
+  caption = "Overall Fit of the Two-Factor CFA Model"
+)
+```
+
+The chi-square statistic is `r round(fit_values["chisq"], 3)` with `r fit_values["df"]` degrees of freedom. Its p-value is `r ifelse(fit_values["pvalue"] < .001, "< .001", round(fit_values["pvalue"], 3))`.
+
+A significant chi-square indicates that the model does not reproduce the observed relationships exactly. However, I also need to consider other fit statistics because chi-square can be sensitive to sample size and model assumptions.
+
+The CFI is `r round(fit_values["cfi"], 3)` and the TLI is `r round(fit_values["tli"], 3)`. Both are below the commonly used guideline of 0.90, suggesting that the proposed model does not improve enough over a model that assumes the items are unrelated.
+
+The RMSEA is `r round(fit_values["rmsea"], 3)`, with a 90% confidence interval from `r round(fit_values["rmsea.ci.lower"], 3)` to `r round(fit_values["rmsea.ci.upper"], 3)`. The RMSEA is higher than the commonly used guideline of 0.08, indicating a noticeable difference between the proposed model and the observed relationships.
+
+The SRMR is `r round(fit_values["srmr"], 3)`. It provides another indication of how closely the model reproduces the observed correlations.
+
+Taken together, the fit statistics raise concerns about the proposed two-factor model. I would not describe the full measurement model as having acceptable fit.
+
+This does not necessarily mean both constructs are measured equally poorly. The next step is to examine the individual factor loadings to identify where the measurement problems may be occurring.
+
+## Standardized factor loadings
+
+Factor loadings show how strongly each item is associated with its intended factor.
+
+I use the guidelines provided in the assignment:
+
+| Standardized loading | Interpretation     |
+|----------------------|--------------------|
+| 0.70 or higher       | Strong             |
+| 0.60–0.69            | Moderate to strong |
+| 0.50–0.59            | Moderate           |
+| 0.40–0.49            | Weak               |
+| Below 0.40           | Very weak          |
+
+These guidelines refer to loading size. The direction of the loading must also be considered, especially for items with reversed numerical coding.
+
+```{r}
+#| label: factor-loadings
+estimates <- parameterEstimates(
+  fit,
+  standardized = TRUE
+)
+
+loadings <- estimates |>
+  filter(op == "=~")
+
+loading_table <- data.frame(
+  Factor = loadings$lhs,
+  Item = toupper(loadings$rhs),
+  Std_Loading = loadings$std.all,
+  z_value = loadings$z,
+  p_value = ifelse(
+    loadings$pvalue < .001,
+    "< .001",
+    sprintf("%.3f", loadings$pvalue)
+  )
+)
+
+kable(
+  loading_table,
+  digits = 3,
+  caption = "Standardized Factor Loadings and Significance Tests"
+)
+```
+
+### Employee proficiencies: Q3–Q6
+
+The four employee-proficiency items show strong standardized loadings on the same factor.
+
+Q4, which measures employee helpfulness, has a particularly strong loading of `r round(loadings$std.all[loadings$rhs == "q4"], 3)`. This suggests that members' responses about helpfulness are closely related to their overall evaluation of employee proficiency.
+
+Q3 (courtesy), Q5 (professionalism), and Q6 (availability) also contribute meaningfully to the same factor.
+
+These findings are consistent with my earlier Case 31 factor analysis, where the four items formed one clear factor and showed good internal consistency.
+
+The wording of these questions also makes sense as a group. All four concern how employees interact with members, so it is reasonable that respondents who evaluate one employee behavior positively tend to give favorable ratings on the others.
+
+Overall, the CFA loadings provide additional support for measuring employee proficiency using Q3–Q6.
+
+### Operational effectiveness: Q9r–Q12 and Q31–Q34
+
+The operational-effectiveness factor shows a much less consistent pattern.
+
+Q32, which asks whether the credit union processes loan applications promptly, has one of the strongest loadings on this factor. Its standardized loading is `r round(loadings$std.all[loadings$rhs == "q32"], 3)`.
+
+However, several other items have relatively weak loadings.
+
+Q9r has a weak relationship with the factor. This is understandable because the question asks about how frequently members receive account statements rather than directly asking whether they are satisfied with the credit union's operations.
+
+Q10 and Q11 have negative loadings because their original numerical coding runs in the opposite direction from favorable evaluations. For example, a lower Q10 score indicates better statement accuracy. Their negative signs should not automatically be interpreted as poor measurement.
+
+Q12 is particularly concerning. Its standardized loading is `r round(loadings$std.all[loadings$rhs == "q12"], 3)`, and its relationship with the operational factor is not statistically significant at the .05 level.
+
+This question asks whether account information is maintained confidentially. Although confidentiality is an important part of credit union operations, members' answers may not closely follow their opinions about loan processing, statement accuracy, or application procedures.
+
+Q31 also concerns the confidentiality of financial information, but it uses a five-point agreement scale rather than the yes/no format used in Q12. The two questions are related in content but may not capture members' perceptions in exactly the same way.
+
+The operational factor therefore appears to combine several different experiences rather than a closely related set of indicators.
+
+This is similar to what I found in my previous reliability and factor analyses, although the current CFA uses a broader set of eight operational items.
+
+# Reliability and Convergent Validity
+
+## Internal consistency: Cronbach's alpha
+
+Reliability examines whether the items intended to measure the same construct produce consistent responses.
+
+I use Cronbach's alpha, following the approach used in my earlier Case 31 assignments.
+
+For the employee construct, all four questions already have the same direction.
+
+For the operational construct, I reverse Q10, Q11, and Q12 for the reliability calculation so that higher scores generally represent more favorable responses. This is separate from the original CFA model, which keeps the specified Q10–Q12 variables.
+
+```{r}
+#| label: reliability
+employee_items <- model_data[c(
+  "q3", "q4", "q5", "q6"
+)]
+
+operational_items <- model_data[c(
+  "q9r", "q10", "q11", "q12",
+  "q31", "q32", "q33", "q34"
+)]
+
+operational_items$q10 <- 5 - operational_items$q10
+operational_items$q11 <- 3 - operational_items$q11
+operational_items$q12 <- 3 - operational_items$q12
+
+employee_alpha <- psych::alpha(
+  employee_items,
+  warnings = FALSE
+)
+
+operational_alpha <- psych::alpha(
+  na.omit(operational_items),
+  warnings = FALSE
+)
+
+alpha_table <- data.frame(
+  Construct = c(
+    "Employee proficiencies",
+    "Operational effectiveness"
+  ),
+  N = c(
+    nrow(employee_items),
+    nrow(na.omit(operational_items))
+  ),
+  Raw_Alpha = c(
+    employee_alpha$total$raw_alpha,
+    operational_alpha$total$raw_alpha
+  ),
+  Standardized_Alpha = c(
+    employee_alpha$total$std.alpha,
+    operational_alpha$total$std.alpha
+  )
+)
+
+kable(
+  alpha_table,
+  digits = 3,
+  caption = "Internal Consistency of the Two Constructs"
+)
+```
+
+The employee-proficiency scale has a Cronbach's alpha of `r round(employee_alpha$total$raw_alpha, 3)`, which is above the commonly used 0.70 guideline.
+
+This is consistent with my previous reliability analysis, where Q3–Q6 had an alpha of approximately 0.866.
+
+The result suggests that courtesy, helpfulness, professionalism, and availability are measuring a common attitude reasonably consistently.
+
+The operational-effectiveness scale has a much lower alpha of `r round(operational_alpha$total$raw_alpha, 3)`.
+
+This raises concerns about combining all eight operational items into one score.
+
+The difference is not surprising when considering their content. A member might be satisfied with statement accuracy but dissatisfied with loan processing. Similarly, feeling confident about information confidentiality does not necessarily mean the member finds loan applications easy to complete.
+
+Q9 also remains conceptually different from the other items even after its numerical direction has been reversed.
+
+For these reasons, I would not recommend creating one operational-effectiveness index using all eight items based on the current results.
+
+## Composite reliability and average variance extracted
+
+In addition to Cronbach's alpha, I examine composite reliability (CR) and average variance extracted (AVE) using the standardized CFA loadings.
+
+Composite reliability considers how strongly the items contribute to their factor and how much measurement error remains.
+
+Average variance extracted measures how much of the indicators' variance is explained by their shared factor, on average.
+
+Common guidelines are CR of approximately 0.70 or higher and AVE of approximately 0.50 or higher.
+
+I calculate these values using the standardized loadings from the CFA model. For Q10–Q12, I account for the original reverse direction when calculating composite reliability.
+
+```{r}
+#| label: convergent-validity
+std_loadings <- standardizedSolution(fit) |>
+  filter(op == "=~")
+
+calculate_validity <- function(factor_name) {
+
+  x <- std_loadings |>
+    filter(lhs == factor_name)
+
+  lambda <- x$est.std
+
+  if (factor_name == "Operational_Effectiveness") {
+    lambda[x$rhs %in% c("q10", "q11", "q12")] <-
+      -lambda[x$rhs %in% c("q10", "q11", "q12")]
+  }
+
+  error <- 1 - lambda^2
+
+  cr <- sum(lambda)^2 /
+    (sum(lambda)^2 + sum(error))
+
+  ave <- mean(lambda^2)
+
+  data.frame(
+    Construct = factor_name,
+    CR = cr,
+    AVE = ave,
+    Square_Root_AVE = sqrt(ave)
+  )
+}
+
+validity_table <- bind_rows(
+  calculate_validity("Employee_Proficiencies"),
+  calculate_validity("Operational_Effectiveness")
+)
+
+kable(
+  validity_table,
+  digits = 3,
+  caption = "Composite Reliability and Average Variance Extracted"
+)
+```
+
+### Interpretation of convergent validity
+
+The employee-proficiency factor has a composite reliability of `r round(validity_table$CR[1], 3)` and an AVE of `r round(validity_table$AVE[1], 3)`.
+
+Both results support the proposed construct. The employee questions not only show good internal consistency but also share a substantial amount of variance through the same factor.
+
+This suggests that the four indicators are measuring the intended employee-proficiency construct reasonably well.
+
+The operational-effectiveness factor has a composite reliability of `r round(validity_table$CR[2], 3)` and an AVE of `r round(validity_table$AVE[2], 3)`.
+
+These results are much weaker.
+
+The low AVE indicates that the proposed operational factor explains only a relatively small portion of the variation in its indicators. Much of the variation remains specific to individual questions.
+
+This is important because the operational questions refer to different activities. They may all be relevant for evaluating the credit union, but relevance alone does not mean that the questions form a reliable single factor.
+
+Overall, the evidence for convergent validity is much stronger for employee proficiency than for operational effectiveness.
+
+# Discriminant Validity
+
+Discriminant validity examines whether two constructs can be distinguished from each other.
+
+For Case 31, I want to know whether employee proficiency and operational effectiveness represent different aspects of members' experiences, even if they are related.
+
+I first examine the correlation between the two latent factors.
+
+```{r}
+#| label: factor-correlation
+factor_cor <- lavInspect(fit, "cor.lv")
+
+kable(
+  factor_cor,
+  digits = 3,
+  caption = "Correlation Between the Latent Factors"
+)
+```
+
+```{r}
+#| label: discriminant-validity
+correlation <- factor_cor[
+  "Employee_Proficiencies",
+  "Operational_Effectiveness"
+]
+
+discriminant_table <- data.frame(
+  Construct = validity_table$Construct,
+  Square_Root_AVE = validity_table$Square_Root_AVE,
+  Factor_Correlation = abs(correlation),
+  Comparison = ifelse(
+    validity_table$Square_Root_AVE > abs(correlation),
+    "Higher",
+    "Lower"
+  )
+)
+
+kable(
+  discriminant_table,
+  digits = 3,
+  caption = "Discriminant Validity Comparison"
+)
+```
+
+The correlation between employee proficiency and operational effectiveness is `r round(correlation, 3)`.
+
+This indicates that the two factors are positively related. Members who rate employees more favorably also tend to have more positive evaluations of operations.
+
+However, the correlation is not so high that the factors appear to be completely identical.
+
+I also compare the square root of each factor's AVE with the absolute correlation between the factors.
+
+For employee proficiency, the square root of AVE is `r round(validity_table$Square_Root_AVE[1], 3)`, which is higher than the factor correlation.
+
+For operational effectiveness, the square root of AVE is `r round(validity_table$Square_Root_AVE[2], 3)`, which is lower than the factor correlation.
+
+This means that the additional comparison supports employee proficiency more clearly than operational effectiveness.
+
+Although the questionnaire separates the two constructs conceptually, the evidence is not strong enough to conclude that both factors have satisfactory discriminant validity.
+
+The main issue is not simply that the factors are correlated. The operational factor has weak convergent validity, making it difficult to establish that it measures a clear and distinct concept.
+
+# Model Problems and Possible Improvements
+
+The CFA results suggest several measurement concerns, especially for operational effectiveness.
+
+## Different types of operational questions
+
+The eight operational indicators use different response formats.
+
+Q9 concerns statement frequency, Q10 measures accuracy on a four-point rating scale, Q11–Q12 are yes/no questions, and Q31–Q34 use five-point agreement scales.
+
+These differences matter because the questions do not all measure attitudes in the same way.
+
+For example, Q9 asks whether statements are received too often, about right, or not often enough. This measures the frequency of a service experience, not necessarily how positively members evaluate the credit union.
+
+Q11 also has very little variation because nearly all respondents said their statements were easy to understand. Such a response distribution may limit its contribution to the factor.
+
+## Operational effectiveness may be too broad
+
+Another concern is the meaning of the operational-effectiveness construct itself.
+
+Q31 focuses on confidentiality, Q32 concerns processing speed, Q33 asks whether services meet members' needs, and Q34 concerns the simplicity of loan applications.
+
+These are all important operational activities, but they may not reflect one narrow underlying attitude.
+
+For example, someone might believe that financial information is protected while still feeling that the loan application process is inconvenient.
+
+This helps explain why the operational questions have weaker relationships with one another than the employee-proficiency questions.
+
+## Relationship to my earlier Case 31 analysis
+
+My earlier reliability and factor analysis of Q31–Q34 already suggested that these items did not work well as one scale.
+
+The four-item operational measure had a Cronbach's alpha of approximately 0.472, and its factor loadings were uneven.
+
+The current CFA includes Q9r–Q12 in addition to Q31–Q34, but the broader operational factor still does not show convincing measurement quality.
+
+In contrast, the employee-proficiency questions continue to perform consistently across the earlier factor analysis, reliability assessment, and current CFA.
+
+These results suggest that the problem with operational effectiveness is not limited to one statistical method. The way the construct is defined and measured may need to be reconsidered.
+
+## Decisions about model modification
+
+I keep the original two-factor model specified in the assignment.
+
+I do not remove questions or add correlated errors simply to improve the fit statistics.
+
+Although modification indices can suggest where a model might be improved, statistical improvement alone is not enough to justify changing the measurement structure.
+
+If the operational measure were revised in future work, I would first reconsider the content of its indicators and determine whether a narrower factor could be supported conceptually.
+
+For example, loan-processing promptness and application simplicity may be more closely related to one another than either is to statement frequency.
+
+However, this would be a new measurement proposal rather than confirmation of the original model. It would need to be estimated and compared with the hypothesized model using appropriate data.
+
+# Interpretation and Conclusion
+
+The results provide different levels of support for the two proposed constructs.
+
+Employee proficiency has relatively strong measurement support. Q3–Q6 have substantial standardized loadings, good internal consistency, and stronger evidence of convergent validity. These results are also consistent with my previous Case 31 assignments.
+
+The four items focus on closely related employee behaviors, so it makes sense that members' ratings of courtesy, helpfulness, professionalism, and availability reflect one underlying attitude.
+
+Operational effectiveness is less convincing as a single factor. The eight indicators cover different aspects of the credit union's services and use different response formats. Several items have weak loadings, and the reliability and convergent-validity results are below commonly used guidelines.
+
+The overall model fit is also inadequate, which means the proposed two-factor structure does not represent the observed relationships particularly well.
+
+For these reasons, I would not recommend using the complete two-factor measurement model without further evaluation in a subsequent structural model.
+
+The employee-proficiency measure appears suitable for further consideration, but operational effectiveness requires a clearer definition and stronger evidence that its indicators measure the same underlying concept.
+
+Before testing structural hypotheses, I would review the operational items, consider whether separate aspects of operations should be measured individually, and evaluate any revised measurement model rather than automatically combining all the questions.
+
+The main lesson from this assignment is that questions can belong to the same general topic without necessarily forming a reliable and valid scale.
+
+CFA helps identify these problems before the measures are used in more complicated analyses. It does not test whether employee proficiency or operational effectiveness causes other outcomes, and it does not establish the substantive hypotheses from the Case 31 measurement table.
+
+# Appendix
+
+- GitHub Repository: [Case31 Data Preparation](https://github.com/Sheilaaa0312/Case31_Data_Preparation)
+- GitHub Pages Report: [M13 Measurement Model Assessment](https://sheilaaa0312.github.io/Case31_Data_Preparation/M13_Case31_Measurement_Model_Assessment.html)
